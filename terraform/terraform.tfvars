@@ -1,0 +1,11 @@
+aws_region             = "us-west-2"
+aws_profile            = "account2"
+vpc_cidr               = "10.0.0.0/16"
+public_subnet_cidrs    = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs   = ["10.0.10.0/24", "10.0.11.0/24"]
+my_ip                  = "172.56.166.182"
+ssh_public_key_path    = "~/.ssh/id_ed25519_github.pub"
+custom_ami_id          = "ami-0f6bb30a6a2212609"
+bastion_instance_type  = "t3.micro"
+private_instance_type  = "t3.micro"
+private_instance_count = 6
