@@ -1,8 +1,157 @@
-# Assignment 11 - Terraform + Ansible Infrastructure
+# AWS Infrastructure with Packer & Terraform
 
-This project provisions AWS infrastructure using **Terraform** (7 EC2 instances) and configures them using an **Ansible** playbook.
+This project provisions a secure AWS infrastructure using **Packer** for custom AMI creation and **Terraform** for infrastructure-as-code deployment.
 
 ## Architecture
+
+![Architecture Diagram](architecture.svg)
+
+## What Gets Created
+
+| Resource | Details |
+|----------|---------|
+| **Custom AMI** | Amazon Linux 2023 + Docker + SSH key (via Packer) |
+| **VPC** | `10.0.0.0/16` with DNS support enabled |
+| **Public Subnets** | 2 subnets across AZs (`10.0.1.0/24`, `10.0.2.0/24`) |
+| **Private Subnets** | 2 subnets across AZs (`10.0.10.0/24`, `10.0.11.0/24`) |
+| **Internet Gateway** | Attached to VPC for public subnet internet access |
+| **NAT Gateway** | In public subnet for private subnet outbound internet access |
+| **Bastion Host** | 1x `t3.micro` in public subnet (SSH from your IP only) |
+| **Private Instances** | 6x `t3.micro` in private subnets using custom Packer AMI |
+| **Security Groups** | Bastion: port 22 from your IP only; Private: port 22 from bastion SG only |
+
+## Prerequisites
+
+- AWS CLI configured with credentials (`aws configure`)
+- [Packer](https://developer.hashicorp.com/packer/install) installed
+- [Terraform](https://developer.hashicorp.com/terraform/install) installed
+- An SSH key pair (Ed25519 recommended)
+
+### Install Packer & Terraform (macOS)
+
+```bash
+brew tap hashicorp/tap
+brew install hashicorp/tap/packer
+brew install hashicorp/tap/terraform
+```
+
+## Step 1: Build the Custom AMI with Packer
+
+```bash
+cd packer
+
+# Initialize Packer plugins
+packer init ami.pkr.hcl
+
+# Validate the template
+packer validate ami.pkr.hcl
+
+# Build the AMI
+packer build ami.pkr.hcl
+```
+
+After the build completes, Packer outputs the AMI ID. Copy it and paste into `terraform/terraform.tfvars` as `custom_ami_id`.
+
+## Step 2: Deploy Infrastructure with Terraform
+
+### Initialize Terraform
+
+```bash
+cd terraform
+terraform init
+```
+
+![Terraform Init](screenshots/02-terraform-init-complete.png)
+
+### Plan and Review
+
+```bash
+terraform apply
+```
+
+Terraform shows all 24 resources it will create including VPC, subnets, route tables, NAT gateway, security groups, bastion host, and 6 private instances:
+
+![Terraform Plan - Key Pair and Bastion](screenshots/03-terraform-plan-keypair.png)
+
+![Terraform Plan - Summary showing 24 resources](screenshots/05-terraform-plan-summary.png)
+
+Type `yes` to approve.
+
+### Resources Creating
+
+![Terraform creating all resources](screenshots/06-terraform-apply-creating.png)
+
+### Deployment Complete
+
+All 24 resources created successfully. Terraform outputs the bastion public IP and all 6 private instance IPs:
+
+![Terraform Apply Complete](screenshots/07-terraform-apply-complete.png)
+
+## Step 3: Verify in AWS Console
+
+After deployment, all 7 instances (1 bastion + 6 private) are visible and running in the EC2 console:
+
+![AWS Console - EC2 Instances Running](screenshots/08-aws-ec2-instances.png)
+
+## Step 4: Connect to Private Instances via Bastion
+
+The same SSH key is used for both bastion and private instances. Use SSH agent forwarding to hop through the bastion.
+
+### SSH to Bastion, then hop to Private Instance
+
+```bash
+# Start SSH agent and add key
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519_github
+
+# SSH to bastion with agent forwarding
+ssh -A -i ~/.ssh/id_ed25519_github ec2-user@<BASTION_PUBLIC_IP>
+
+# From bastion, hop to any private instance
+ssh ec2-user@<PRIVATE_INSTANCE_IP>
+
+# Verify Docker
+docker --version
+```
+
+![SSH into Bastion and hop to Private Instance - Docker verified](screenshots/09-ssh-bastion-hop-docker.png)
+
+The screenshot shows:
+1. SSH into the bastion host at `34.208.21.216` (Amazon Linux 2023)
+2. From the bastion, SSH hop to private instance `10.0.10.46`
+3. Docker version `25.0.14` confirmed on the private instance
+
+## Cleanup
+
+To avoid ongoing AWS charges, destroy all resources:
+
+```bash
+cd terraform
+terraform destroy
+```
+
+![Terraform Destroy](screenshots/10-terraform-destroy.png)
+
+Then optionally deregister the Packer AMI from the AWS Console (EC2 > AMIs).
+
+---
+
+# Assignment 11 - Terraform + Ansible
+
+Building on the Assignment 8 infrastructure above, this update provisions **7 EC2 instances** (3 Ubuntu, 3 Amazon Linux, 1 Ansible Controller) and uses an **Ansible playbook** to configure them.
+
+## What Changed from Assignment 8
+
+| Change | Details |
+|--------|---------|
+| **EC2 Instances** | Replaced 6 identical Packer AMI instances with 3 Ubuntu + 3 Amazon Linux using dynamic AMI lookups |
+| **OS Tags** | Ubuntu instances tagged `OS: ubuntu`, Amazon Linux tagged `OS: amazon` |
+| **Ansible Controller** | New EC2 in public subnet with Ansible pre-installed via user_data |
+| **Security Groups** | Private SG now allows SSH from both bastion and Ansible controller |
+| **Ansible Playbook** | New playbook to update packages, install Docker, and report disk usage |
+| **Auto-generated Inventory** | Terraform generates `ansible/inventory.ini` with correct IPs and SSH users |
+
+## Assignment 11 Architecture
 
 | Resource | Details |
 |----------|---------|
@@ -17,18 +166,11 @@ This project provisions AWS infrastructure using **Terraform** (7 EC2 instances)
 | **Amazon Linux Instances** | 3x `t3.micro` in private subnets (tagged `OS: amazon`) |
 | **Security Groups** | Bastion & Ansible Controller: SSH from your IP; Private: SSH from bastion & controller |
 
-## Prerequisites
+## Assignment 11 Prerequisites
 
 - AWS CLI configured with credentials (`aws configure`)
 - [Terraform](https://developer.hashicorp.com/terraform/install) installed
 - An SSH key pair (Ed25519 recommended)
-
-### Install Terraform (macOS)
-
-```bash
-brew tap hashicorp/tap
-brew install hashicorp/tap/terraform
-```
 
 ## Step 1: Configure Variables
 
