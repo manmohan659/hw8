@@ -1,127 +1,138 @@
-# AWS Infrastructure with Packer & Terraform
+# Assignment 11 - Terraform + Ansible Infrastructure
 
-This project provisions a secure AWS infrastructure using **Packer** for custom AMI creation and **Terraform** for infrastructure-as-code deployment.
+This project provisions AWS infrastructure using **Terraform** (7 EC2 instances) and configures them using an **Ansible** playbook.
 
 ## Architecture
 
-![Architecture Diagram](architecture.svg)
-
-## What Gets Created
-
 | Resource | Details |
 |----------|---------|
-| **Custom AMI** | Amazon Linux 2023 + Docker + SSH key (via Packer) |
 | **VPC** | `10.0.0.0/16` with DNS support enabled |
 | **Public Subnets** | 2 subnets across AZs (`10.0.1.0/24`, `10.0.2.0/24`) |
 | **Private Subnets** | 2 subnets across AZs (`10.0.10.0/24`, `10.0.11.0/24`) |
 | **Internet Gateway** | Attached to VPC for public subnet internet access |
 | **NAT Gateway** | In public subnet for private subnet outbound internet access |
 | **Bastion Host** | 1x `t3.micro` in public subnet (SSH from your IP only) |
-| **Private Instances** | 6x `t3.micro` in private subnets using custom Packer AMI |
-| **Security Groups** | Bastion: port 22 from your IP only; Private: port 22 from bastion SG only |
+| **Ansible Controller** | 1x `t3.micro` in public subnet (Ansible pre-installed via user_data) |
+| **Ubuntu Instances** | 3x `t3.micro` in private subnets (tagged `OS: ubuntu`) |
+| **Amazon Linux Instances** | 3x `t3.micro` in private subnets (tagged `OS: amazon`) |
+| **Security Groups** | Bastion & Ansible Controller: SSH from your IP; Private: SSH from bastion & controller |
 
 ## Prerequisites
 
 - AWS CLI configured with credentials (`aws configure`)
-- [Packer](https://developer.hashicorp.com/packer/install) installed
 - [Terraform](https://developer.hashicorp.com/terraform/install) installed
 - An SSH key pair (Ed25519 recommended)
 
-### Install Packer & Terraform (macOS)
+### Install Terraform (macOS)
 
 ```bash
 brew tap hashicorp/tap
-brew install hashicorp/tap/packer
 brew install hashicorp/tap/terraform
 ```
 
-## Step 1: Build the Custom AMI with Packer
+## Step 1: Configure Variables
 
-```bash
-cd packer
+Edit `terraform/terraform.tfvars` with your values:
 
-# Initialize Packer plugins
-packer init ami.pkr.hcl
-
-# Validate the template
-packer validate ami.pkr.hcl
-
-# Build the AMI
-packer build ami.pkr.hcl
+```hcl
+aws_region            = "us-west-2"
+aws_profile           = "account2"           # Your AWS CLI profile
+my_ip                 = "YOUR_PUBLIC_IP"      # Your public IP for SSH access
+ssh_public_key_path   = "~/.ssh/id_ed25519_github.pub"
 ```
 
-After the build completes, Packer outputs the AMI ID. Copy it and paste into `terraform/terraform.tfvars` as `custom_ami_id`.
+Find your public IP:
+
+```bash
+curl -s ifconfig.me
+```
 
 ## Step 2: Deploy Infrastructure with Terraform
 
-### Initialize Terraform
-
 ```bash
 cd terraform
+
+# Initialize Terraform
 terraform init
-```
 
-![Terraform Init](screenshots/02-terraform-init-complete.png)
+# Review the plan
+terraform plan
 
-### Plan and Review
-
-```bash
+# Apply (creates 8 EC2 instances: 1 bastion + 1 ansible controller + 3 ubuntu + 3 amazon linux)
 terraform apply
 ```
 
-Terraform shows all 24 resources it will create including VPC, subnets, route tables, NAT gateway, security groups, bastion host, and 6 private instances:
+Type `yes` to approve. Terraform outputs the following IPs:
 
-![Terraform Plan - Key Pair and Bastion](screenshots/03-terraform-plan-keypair.png)
+- `bastion_public_ip` - Public IP of the bastion host
+- `ansible_controller_public_ip` - Public IP of the Ansible controller
+- `ubuntu_private_ips` - Private IPs of the 3 Ubuntu instances
+- `amazon_linux_private_ips` - Private IPs of the 3 Amazon Linux instances
 
-![Terraform Plan - Summary showing 24 resources](screenshots/05-terraform-plan-summary.png)
+Terraform also auto-generates the Ansible inventory file at `ansible/inventory.ini`.
 
-Type `yes` to approve.
+## Step 3: Verify EC2 Instances in AWS Console
 
-### Resources Creating
+After deployment, verify all 8 instances are running in the EC2 console. You should see:
 
-![Terraform creating all resources](screenshots/06-terraform-apply-creating.png)
+- 1 bastion host
+- 1 Ansible controller
+- 3 Ubuntu instances (tagged `OS: ubuntu`)
+- 3 Amazon Linux instances (tagged `OS: amazon`)
 
-### Deployment Complete
+## Step 4: Run the Ansible Playbook
 
-All 24 resources created successfully. Terraform outputs the bastion public IP and all 6 private instance IPs:
-
-![Terraform Apply Complete](screenshots/07-terraform-apply-complete.png)
-
-## Step 3: Verify in AWS Console
-
-After deployment, all 7 instances (1 bastion + 6 private) are visible and running in the EC2 console:
-
-![AWS Console - EC2 Instances Running](screenshots/08-aws-ec2-instances.png)
-
-## Step 4: Connect to Private Instances via Bastion
-
-The same SSH key is used for both bastion and private instances. Use SSH agent forwarding to hop through the bastion.
-
-### SSH to Bastion, then hop to Private Instance
+### 4a. SSH into the Ansible Controller
 
 ```bash
 # Start SSH agent and add key
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519_github
 
-# SSH to bastion with agent forwarding
-ssh -A -i ~/.ssh/id_ed25519_github ec2-user@<BASTION_PUBLIC_IP>
-
-# From bastion, hop to any private instance
-ssh ec2-user@<PRIVATE_INSTANCE_IP>
-
-# Verify Docker
-docker --version
+# SSH into the Ansible controller
+ssh -A ec2-user@<ANSIBLE_CONTROLLER_PUBLIC_IP>
 ```
 
-![SSH into Bastion and hop to Private Instance - Docker verified](screenshots/09-ssh-bastion-hop-docker.png)
+### 4b. Wait for Ansible Installation
 
-The screenshot shows:
-1. SSH into the bastion host at `34.208.21.216` (Amazon Linux 2023)
-2. From the bastion, SSH hop to private instance `10.0.10.46`
-3. Docker version `25.0.14` confirmed on the private instance
+The Ansible controller installs Ansible via user_data on first boot. Verify it's ready:
 
-## Cleanup
+```bash
+ansible --version
+```
+
+If the command is not found, wait a minute and try again (user_data is still running).
+
+### 4c. Copy Playbook and Inventory to the Controller
+
+From your **local machine** (not the controller), SCP the files:
+
+```bash
+scp -r ansible/* ec2-user@<ANSIBLE_CONTROLLER_PUBLIC_IP>:~/
+scp ~/.ssh/id_ed25519_github ec2-user@<ANSIBLE_CONTROLLER_PUBLIC_IP>:~/.ssh/
+```
+
+### 4d. Run the Playbook
+
+SSH back into the controller and run:
+
+```bash
+ssh -A ec2-user@<ANSIBLE_CONTROLLER_PUBLIC_IP>
+
+# Set correct permissions on the SSH key
+chmod 600 ~/.ssh/id_ed25519_github
+
+# Run the playbook
+ansible-playbook -i inventory.ini playbook.yml
+```
+
+### What the Playbook Does
+
+1. **Updates and upgrades packages** - `apt update && apt upgrade` for Ubuntu, `dnf update` for Amazon Linux
+2. **Installs and verifies latest Docker** - Installs Docker from official repos and starts the service
+3. **Reports disk usage** - Runs `df -h` and displays output for each instance
+
+## Step 5: Cleanup
 
 To avoid ongoing AWS charges, destroy all resources:
 
@@ -130,30 +141,35 @@ cd terraform
 terraform destroy
 ```
 
-![Terraform Destroy](screenshots/10-terraform-destroy.png)
-
-Then optionally deregister the Packer AMI from the AWS Console (EC2 > AMIs).
+Type `yes` to confirm.
 
 ## Project Structure
 
 ```
 hw8/
+├── ansible/
+│   ├── ansible.cfg              # Ansible configuration
+│   ├── inventory.ini            # Auto-generated by Terraform
+│   └── playbook.yml             # Main playbook (update, Docker, disk usage)
 ├── packer/
-│   ├── ami.pkr.hcl              # Packer template for custom AMI
+│   ├── ami.pkr.hcl              # Packer template (from Assignment 8)
 │   └── scripts/
-│       └── setup.sh             # Provisioning script (Docker + SSH key)
+│       └── setup.sh             # AMI provisioning script
 ├── terraform/
-│   ├── main.tf                  # Root module - wires all modules together
+│   ├── main.tf                  # Root module - wires all modules + generates inventory
 │   ├── variables.tf             # Input variables
-│   ├── outputs.tf               # Output values
+│   ├── outputs.tf               # Output values (IPs)
 │   ├── terraform.tfvars         # Variable values (edit before applying)
+│   ├── templates/
+│   │   └── inventory.tpl        # Ansible inventory template
 │   └── modules/
 │       ├── vpc/                 # VPC + Internet Gateway
 │       ├── subnets/             # Public + Private subnets
 │       ├── routing/             # Route tables + NAT Gateway
-│       ├── security-groups/     # Bastion SG + Private SG
+│       ├── security-groups/     # Bastion SG + Ansible Controller SG + Private SG
 │       ├── bastion/             # Bastion host EC2
-│       └── ec2-private/         # 6 private EC2 instances
+│       ├── ansible-controller/  # Ansible controller EC2 (with Ansible pre-installed)
+│       └── ec2-private/         # 3 Ubuntu + 3 Amazon Linux EC2 instances
 ├── screenshots/                 # Deployment evidence
 ├── .gitignore
 └── README.md

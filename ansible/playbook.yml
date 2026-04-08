@@ -1,0 +1,96 @@
+---
+- name: Configure EC2 Instances - Update, Docker, Disk Usage
+  hosts: all
+  become: yes
+
+  tasks:
+    # ---- Update and Upgrade Packages ----
+    - name: Update and upgrade packages (Ubuntu)
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+
+        - name: Upgrade all packages
+          apt:
+            upgrade: dist
+
+    - name: Update and upgrade packages (Amazon Linux)
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Update all packages
+          dnf:
+            name: "*"
+            state: latest
+
+    # ---- Install and Verify Latest Docker ----
+    - name: Install Docker on Ubuntu
+      when: ansible_os_family == "Debian"
+      block:
+        - name: Install prerequisites
+          apt:
+            name:
+              - ca-certificates
+              - curl
+              - gnupg
+              - lsb-release
+            state: present
+
+        - name: Create keyrings directory
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: Add Docker GPG key
+          shell: |
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
+          args:
+            creates: /etc/apt/keyrings/docker.gpg
+
+        - name: Add Docker repository
+          shell: |
+            echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+
+        - name: Install Docker Engine
+          apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+            state: latest
+            update_cache: yes
+
+    - name: Install Docker on Amazon Linux
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: Install Docker
+          dnf:
+            name: docker
+            state: latest
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Verify Docker version
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Display Docker version
+      debug:
+        msg: "{{ inventory_hostname }} -> {{ docker_version.stdout }}"
+
+    # ---- Report Disk Usage ----
+    - name: Get disk usage
+      command: df -h
+      register: disk_usage
+      changed_when: false
+
+    - name: Report disk usage
+      debug:
+        msg: "{{ inventory_hostname }} disk usage:\n{{ disk_usage.stdout }}"

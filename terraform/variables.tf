@@ -40,13 +40,14 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519_github.pub"
 }
 
-variable "custom_ami_id" {
-  description = "AMI ID created by Packer for private instances"
-  type        = string
-}
-
 variable "bastion_instance_type" {
   description = "Instance type for the bastion host"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "ansible_instance_type" {
+  description = "Instance type for the Ansible controller"
   type        = string
   default     = "t3.micro"
 }
@@ -55,10 +56,4 @@ variable "private_instance_type" {
   description = "Instance type for private EC2 instances"
   type        = string
   default     = "t3.micro"
-}
-
-variable "private_instance_count" {
-  description = "Number of EC2 instances in private subnet"
-  type        = number
-  default     = 6
 }
