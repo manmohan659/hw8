@@ -1,15 +1,5 @@
-variable "instance_count" {
-  description = "Number of private EC2 instances"
-  type        = number
-}
-
 variable "instance_type" {
   description = "Instance type for private instances"
-  type        = string
-}
-
-variable "custom_ami_id" {
-  description = "Custom AMI ID from Packer"
   type        = string
 }
 
